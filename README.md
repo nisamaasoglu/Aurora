@@ -28,7 +28,7 @@ Sound passes through three stages before it reaches the browser:
 
 ```mermaid
 flowchart LR
-    A[Microphone / live sound] --> B[Analysis · Python + librosa<br/>RMS · centroid · rolloff<br/>pitch (yin) · MFCC · chroma]
+    A["Microphone / live sound] --> B[Analysis · Python + librosa<br/>RMS · centroid · rolloff<br/>pitch (yin) · MFCC · chroma"]
     B --> C[WebSocket · aiohttp<br/>low-latency JSON]
     C --> D[Visuals · p5.js + GLSL<br/>domain-warped fluid field]
     D --> E[Screen + saveable artwork]
