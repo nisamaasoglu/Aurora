@@ -137,4 +137,4 @@ Emotion is derived through **transparent, rule-based (heuristic)** thresholds ov
 
 MIT — see [LICENSE](LICENSE).
 
-<p align="center"><sub>Hayrunnisa Maaşoğlu · Aksaray University, Software Engineering</sub></p>
+<p align="center"><sub>Nisa Maaşoğlu · Software Engineer</sub></p>
