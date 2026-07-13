@@ -1,0 +1,6 @@
+# Optional: real microphone input.
+# Requires PortAudio on your system:
+#   Windows : pip handles it via wheels
+#   macOS   : brew install portaudio
+#   Linux   : sudo apt install portaudio19-dev
+PyAudio==0.2.14

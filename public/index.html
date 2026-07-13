@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AURORA — live sound · generative light</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<!-- p5.js from CDN; if it fails to load (offline / blocked), a clear message is shown instead of a black screen -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js" crossorigin="anonymous"></script>
+<style>
+  :root {
+    --accent: #3fa0ff;          /* updated live according to emotion */
+    --ink: rgba(255,255,255,.92);
+    --ink-dim: rgba(255,255,255,.55);
+    --glass: rgba(10,12,20,.42);
+    --hair: rgba(255,255,255,.14);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: "Space Grotesk", system-ui, sans-serif; color: var(--ink); }
+  canvas { display: block; }
+
+  /* --- HUD: quiet and legible, like an instrument panel --- */
+  .hud { position: fixed; inset: 0; pointer-events: none; opacity: 0;
+    transition: opacity 1.2s ease; }
+  .hud.on { opacity: 1; }
+
+  .brand { position: absolute; top: 26px; left: 30px; }
+  .brand h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: .42em;
+    text-indent: .42em; }
+  .brand p { margin: 4px 0 0; font-size: 10.5px; letter-spacing: .28em;
+    text-transform: uppercase; color: var(--ink-dim); }
+
+  .status { position: absolute; top: 30px; right: 30px; display: flex; align-items: center;
+    gap: 9px; font-size: 11px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--ink-dim); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #f2b134;
+    box-shadow: 0 0 10px #f2b134; transition: background .4s, box-shadow .4s; }
+  .dot.live { background: #35d07f; box-shadow: 0 0 10px #35d07f; }
+
+  .panel { position: absolute; left: 30px; bottom: 30px; min-width: 230px;
+    padding: 18px 20px; border: 1px solid var(--hair); border-radius: 14px;
+    background: var(--glass); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); }
+  .row { display: flex; justify-content: space-between; align-items: baseline; margin: 7px 0; }
+  .row .label { font-size: 10px; letter-spacing: .24em; text-transform: uppercase;
+    color: var(--ink-dim); }
+  .row .val { font-family: "IBM Plex Mono", monospace; font-size: 15px; font-weight: 500; }
+  .emotion .val { color: var(--accent); text-transform: capitalize; }
+
+  .meter { height: 4px; border-radius: 3px; background: rgba(255,255,255,.12);
+    margin-top: 3px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; width: 0%; background: var(--accent);
+    box-shadow: 0 0 8px var(--accent); transition: width .12s linear; }
+
+  .sig { position: absolute; right: 30px; bottom: 34px; text-align: right;
+    font-family: "IBM Plex Mono", monospace; }
+  .sig .code { font-size: 26px; color: var(--accent); }
+  .sig .note { font-size: 10px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--ink-dim); margin-top: 2px; }
+
+  .save { pointer-events: auto; position: absolute; right: 30px; bottom: 92px;
+    border: 1px solid var(--hair); border-radius: 999px; background: var(--glass);
+    backdrop-filter: blur(9px); color: var(--ink); padding: 9px 16px; cursor: pointer;
+    font-family: "Space Grotesk", sans-serif; font-size: 12px; letter-spacing: .12em;
+    transition: border-color .3s, transform .1s; }
+  .save:hover { border-color: var(--accent); }
+  .save:active { transform: scale(.97); }
+
+  @media (max-width: 560px) {
+    .panel { min-width: 0; left: 16px; right: 16px; bottom: 16px; }
+    .sig, .save { display: none; }
+    .brand { left: 18px; top: 18px; }
+    .status { right: 18px; top: 22px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .hud { transition: none; } }
+</style>
+</head>
+<body>
+<div class="hud" id="hud">
+  <div class="brand"><h1>AURORA</h1><p>live sound · generative light</p></div>
+  <div class="status"><span id="dot" class="dot"></span><span id="statusText">connecting</span></div>
+
+  <div class="panel">
+    <div class="row"><span class="label">Note</span><span class="val" id="note">—</span></div>
+    <div class="row"><span class="label">Pitch</span><span class="val" id="pitch">— Hz</span></div>
+    <div class="row emotion"><span class="label">Emotion</span><span class="val" id="emotion">—</span></div>
+    <div class="row"><span class="label">Energy</span><span class="val" id="rms">0.00</span></div>
+    <div class="meter"><i id="rmsBar"></i></div>
+    <div class="row"><span class="label">FPS</span><span class="val" id="fps">0</span></div>
+    <div class="row"><span class="label">Latency</span><span class="val" id="lat">— ms</span></div>
+  </div>
+
+  <button class="save" id="record" style="bottom:138px">● Record</button>
+  <button class="save" id="save">Save artwork</button>
+  <div class="sig"><div class="code" id="seed">#00000</div><div class="note">this moment can't be repeated</div></div>
+</div>
+
+<script>
+// ---------------- GLSL ----------------
+const vert = `
+  attribute vec3 aPosition; attribute vec2 aTexCoord; varying vec2 vTexCoord;
+  void main(){ vTexCoord=aTexCoord; vec4 p=vec4(aPosition,1.0);
+    p.xy=p.xy*2.0-1.0; gl_Position=p; }`;
+
+const frag = `
+  precision highp float;
+  varying vec2 vTexCoord;
+  uniform float u_time, u_rms, u_pitch, u_seed;
+  uniform float u_emoFrom, u_emoTo, u_blend;   // spatial emotion transition
+  uniform vec2  u_resolution;
+
+  // ---- 3D noise ----
+  float hash3(vec3 p){
+    p = fract(p*0.3183099 + vec3(0.1,0.2,0.3));
+    p *= 17.0;
+    return fract(p.x*p.y*p.z*(p.x+p.y+p.z));
+  }
+  float noise3(vec3 x){
+    vec3 i = floor(x), f = fract(x);
+    f = f*f*(3.0-2.0*f);
+    float n000=hash3(i),               n100=hash3(i+vec3(1,0,0));
+    float n010=hash3(i+vec3(0,1,0)),   n110=hash3(i+vec3(1,1,0));
+    float n001=hash3(i+vec3(0,0,1)),   n101=hash3(i+vec3(1,0,1));
+    float n011=hash3(i+vec3(0,1,1)),   n111=hash3(i+vec3(1,1,1));
+    return mix(mix(mix(n000,n100,f.x), mix(n010,n110,f.x), f.y),
+               mix(mix(n001,n101,f.x), mix(n011,n111,f.x), f.y), f.z);
+  }
+  float fbm3(vec3 p){
+    float v=0.0, a=0.5;
+    for(int i=0;i<4;i++){ v+=a*noise3(p); p=p*2.03+vec3(11.0); a*=0.5; }
+    return v;
+  }
+  float fbm3lo(vec3 p){       // cheap 2-octave version for the seep mask
+    return 0.5*noise3(p)+0.25*noise3(p*2.03+vec3(11.0))+0.25;
+  }
+
+  vec3 palette(float e){
+    vec3 calm=vec3(0.05,0.25,0.85), happy=vec3(0.0,0.85,0.55), angry=vec3(1.0,0.28,0.05);
+    return (e<0.5) ? mix(calm,happy,e*2.0) : mix(happy,angry,(e-0.5)*2.0);
+  }
+
+  void main(){
+    vec2 uv = (gl_FragCoord.xy*2.0 - u_resolution)/u_resolution.y;
+    float energy = clamp(u_rms*3.0, 0.0, 1.5);
+
+    // Slowly orbiting camera -> parallax sells the 3D mass
+    float ang = u_time*0.06;
+    vec3 ro = vec3(2.7*sin(ang), 0.35*sin(u_time*0.11), -2.7*cos(ang));
+    vec3 fw = normalize(-ro);
+    vec3 rt = normalize(cross(vec3(0.0,1.0,0.0), fw));
+    vec3 up = cross(fw, rt);
+    vec3 rd = normalize(uv.x*rt + uv.y*up + 1.5*fw);
+
+    // The fluid rises and swirls; sound drives the flow speed
+    vec3 flow = vec3(0.0, u_time*(0.10 + 0.35*energy), 0.0);
+    vec3 seedOff = vec3(u_seed*37.0, u_seed*11.0, u_seed*23.0);
+
+    vec3 bF = palette(u_emoFrom), bT = palette(u_emoTo);
+    vec3 accent = mix(vec3(0.55,0.30,0.95), vec3(1.0,0.85,0.40), u_pitch);
+    vec3 lightDir = normalize(vec3(0.5,0.8,-0.3));
+
+    vec3 col = vec3(0.0);
+    float trans = 1.0;
+    float t = 0.7;
+    for(int i=0;i<48;i++){
+      vec3 p = ro + rd*t;
+      vec3 q = p*0.85 + flow + seedOff;
+
+      // domain-warped 3D density: paint-like folds
+      float w = fbm3(q*0.55 + vec3(2.0));
+      float d = fbm3(q + 2.0*vec3(w));
+
+      // spherical falloff -> the fluid reads as a floating sculptural mass
+      float shape = exp(-0.34*dot(p,p));
+      float dens = smoothstep(0.42, 0.80, d) * shape;
+
+      if(dens > 0.004){
+        // self-shadowing: sample density toward the light
+        float dl = fbm3(q + lightDir*0.4 + 2.0*vec3(w));
+        float shade = clamp((d-dl)*2.2 + 0.55, 0.0, 1.0);
+
+        // emotion seep mask in 3D (new color flows in through the volume)
+        float seep = fbm3lo(q*0.9 + vec3(7.7,3.3,1.9));
+        float th = mix(1.05, -0.05, u_blend);
+        float mk = smoothstep(th-0.2, th+0.2, seep);
+        vec3 base = mix(bF, bT, mk);
+        base = mix(base, accent, 0.22*u_pitch);
+
+        vec3 c = base*(0.22 + 0.95*shade) + accent*pow(shade,4.0)*(0.5+energy);
+        float a = dens*(0.55 + 0.5*energy)*0.17;
+        col += c*a*trans;
+        trans *= 1.0 - a;
+        if(trans < 0.03) break;
+      }
+      t += 0.085;
+    }
+
+    col *= 1.15 + 0.9*energy;
+    float vig = smoothstep(1.7, 0.3, length(uv));
+    col *= mix(0.5, 1.0, vig);
+    col += (hash3(vec3(gl_FragCoord.xy, u_time)) - 0.5)*0.02;   // subtle grain
+    gl_FragColor = vec4(col, 1.0);
+  }`;
+
+// ---------------- state ----------------
+let sh, socket;
+const A = { rms:0, pitch:0 };                       // eased (smoothed) values
+let target = { rms:0, pitch:0 };
+let emoFrom = 0, emoTo = 0, emoBlend = 1;           // spatial emotion transition state
+let sessionSeed = 0;      // fixed per run: keeps the field stable for the session
+let renderScale = 1.0;    // adaptive internal resolution (raymarching quality/perf)
+let momentId = 0;         // raw integer id of the latest instant (for signature/filename)
+let reconnectAttempt = 0; // exponential backoff counter
+const EMO = { calm:0.0, sad:0.15, neutral:0.35, happy:0.5, excited:0.75, angry:1.0 };
+const ACCENT = { calm:'#3fa0ff', sad:'#39c6d6', neutral:'#c9c9d6',
+                 happy:'#1fd68a', excited:'#c46bff', angry:'#ff5a2a' };
+const norm = (hz)=> Math.min(Math.max((hz-65)/(2093-65),0),1);
+
+function setup(){
+  createCanvas(windowWidth, windowHeight, WEBGL);
+  noStroke(); pixelDensity(1);
+  sh = createShader(vert, frag);
+  connect();
+  document.getElementById('save').addEventListener('click', ()=>{
+    saveCanvas('aurora-artwork-' + String(momentId).padStart(5,'0'), 'png');
+  });
+
+  // Video recording: capture the living, one-time artwork as WebM.
+  // Uses the canvas stream directly - what you see is exactly what is saved.
+  let recorder = null, chunks = [];
+  const recBtn = document.getElementById('record');
+  recBtn.addEventListener('click', ()=>{
+    if (recorder && recorder.state === 'recording') {
+      recorder.stop();
+      return;
+    }
+    const canvasEl = document.querySelector('canvas');
+    if (!canvasEl || !canvasEl.captureStream || typeof MediaRecorder === 'undefined') {
+      recBtn.textContent = 'Recording unsupported'; return;
+    }
+    const stream = canvasEl.captureStream(30);
+    recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    chunks = [];
+    recorder.ondataavailable = (e)=>{ if (e.data.size) chunks.push(e.data); };
+    recorder.onstop = ()=>{
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'aurora-performance-' + String(momentId).padStart(5,'0') + '.webm';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      recBtn.textContent = '● Record';
+      recBtn.style.color = '';
+    };
+    recorder.start();
+    recBtn.textContent = '■ Stop';
+    recBtn.style.color = '#ff5a2a';
+  });
+}
+
+function draw(){
+  // smooth transitions (avoid sudden jumps)
+  A.rms     = lerp(A.rms,     target.rms,     0.10);
+  A.pitch   = lerp(A.pitch,   target.pitch,   0.05);
+  emoBlend  = Math.min(1, emoBlend + 0.004);        // full seep-in takes ~4 s
+
+  shader(sh);
+  sh.setUniform('u_resolution', [width, height]);
+  sh.setUniform('u_time', millis()/1000.0);
+  sh.setUniform('u_rms', A.rms);
+  sh.setUniform('u_emoFrom', emoFrom);
+  sh.setUniform('u_emoTo', emoTo);
+  sh.setUniform('u_blend', emoBlend);
+  sh.setUniform('u_pitch', A.pitch);
+  sh.setUniform('u_seed', sessionSeed);
+  rect(0,0,width,height);
+
+  document.getElementById('fps').textContent = Math.round(frameRate());
+
+  // Adaptive resolution: raymarching is fill-rate bound, so on weaker GPUs we
+  // trade internal resolution for smoothness (checked every ~2 s).
+  if (frameCount % 120 === 0) {
+    const fr = frameRate();
+    if (fr < 42 && renderScale > 0.5) { renderScale -= 0.15; pixelDensity(renderScale); }
+    else if (fr > 55 && renderScale < 1.0) { renderScale += 0.1; pixelDensity(Math.min(renderScale, 1)); }
+  }
+}
+
+function connect(){
+  socket = new WebSocket(`ws://${location.host}/ws`);   // port-agnostic
+  socket.onopen = ()=>{ reconnectAttempt = 0; setStatus(true); };
+  socket.onclose = ()=>{
+    setStatus(false);
+    // exponential backoff with jitter: 1s, 2s, 4s ... capped at 15s
+    const delay = Math.min(1000 * 2 ** reconnectAttempt++, 15000) + Math.random()*300;
+    setTimeout(connect, delay);
+  };
+  socket.onmessage = (e)=>{
+    try {
+      const d = JSON.parse(e.data);
+      target.rms     = d.rms   || 0;
+      target.pitch   = norm(d.pitch || 0);
+      const tv = EMO[d.emotion] ?? 0.0;
+      if (tv !== emoTo) {                     // new emotion -> start a fresh seep-in
+        emoFrom = emoTo;
+        emoTo = tv;
+        emoBlend = 0;
+      }
+      sessionSeed    = (d.session_seed || 0) / 100000;  // latched, constant per run
+      momentId       = d.moment_id || 0;
+
+      // measured pipeline latency (server timestamp -> client receive).
+      // Valid on localhost, where server and browser share the same clock.
+      if (d.ts) {
+        const lat = Math.max(0, Date.now() - d.ts);
+        document.getElementById('lat').textContent = Math.round(lat) + ' ms';
+      }
+
+      const acc = ACCENT[d.emotion] || '#3fa0ff';
+      document.documentElement.style.setProperty('--accent', acc);
+      document.getElementById('note').textContent    = d.note || '—';
+      document.getElementById('pitch').textContent   = (d.pitch>0 ? Math.round(d.pitch) : '—') + ' Hz';
+      document.getElementById('emotion').textContent = d.emotion || '—';
+      document.getElementById('rms').textContent     = (d.rms||0).toFixed(3);
+      document.getElementById('rmsBar').style.width  = Math.min((d.rms||0)*400,100) + '%';
+      document.getElementById('seed').textContent    = '#' + String(momentId).padStart(5,'0');
+    } catch(_) {}
+  };
+}
+
+// p5 failed to load (offline / CDN blocked): show a clear message instead of a black screen
+window.addEventListener('DOMContentLoaded', ()=>{
+  if (typeof createCanvas === 'undefined') {
+    document.body.innerHTML = '<div style="display:grid;place-items:center;height:100vh;'+
+      'font-family:system-ui;color:#eee;text-align:center;padding:20px">'+
+      '<div><h2>AURORA could not load its renderer</h2>'+
+      '<p>p5.js failed to load from the CDN. Check your internet connection and refresh.</p></div></div>';
+  }
+});
+
+function setStatus(live){
+  document.getElementById('hud').classList.add('on');
+  document.getElementById('dot').classList.toggle('live', live);
+  document.getElementById('statusText').textContent = live ? 'live' : 'connecting';
+}
+
+function windowResized(){ resizeCanvas(windowWidth, windowHeight); }
+</script>
+</body>
+</html>

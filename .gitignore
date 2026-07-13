@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.DS_Store
+*.log
+aurora-eser-*.png     # kaydedilen eserler repoya girmesin
+.idea/
+.vscode/
